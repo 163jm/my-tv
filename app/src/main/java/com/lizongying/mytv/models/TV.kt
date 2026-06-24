@@ -1,6 +1,5 @@
 package com.lizongying.mytv.models
 
-import com.lizongying.mytv.models.ProgramType
 import java.io.Serializable
 
 data class TV(
@@ -8,6 +7,7 @@ data class TV(
     var title: String,
     var alias: String = "",
     var videoUrl: List<String>,
+    var sourceIndex: Int = 0,    // 当前正在播放第几个源（0-based）
     var channel: String = "",
     var logo: Any = "",
     var pid: String = "",
@@ -19,18 +19,6 @@ data class TV(
 ) : Serializable {
 
     override fun toString(): String {
-        return "TV{" +
-                "id=" + id +
-                ", title='" + title + '\'' +
-                ", alias='" + alias + '\'' +
-                ", videoUrl='" + videoUrl + '\'' +
-                ", channel='" + channel + '\'' +
-                ", logo='" + logo + '\'' +
-                ", pid='" + pid + '\'' +
-                ", sid='" + sid + '\'' +
-                ", programType='" + programType + '\'' +
-                ", needToken='" + needToken + '\'' +
-                ", mustToken='" + mustToken + '\'' +
-                '}'
+        return "TV{id=$id, title='$title', sources=${videoUrl.size}, sourceIndex=$sourceIndex}"
     }
 }

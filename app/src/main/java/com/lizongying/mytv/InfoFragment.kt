@@ -1,6 +1,5 @@
 package com.lizongying.mytv
 
-import android.content.res.Resources
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
@@ -22,6 +21,7 @@ class InfoFragment : Fragment() {
 
     private val handler = Handler()
     private val delay: Long = 5000
+    private val sourceDelay: Long = 3000   // 换源提示显示时长
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -31,7 +31,7 @@ class InfoFragment : Fragment() {
 
         val application = requireActivity().applicationContext as MyTVApplication
 
-        binding.info.layoutParams.width = application.px2Px(binding.info.layoutParams.width)
+        binding.info.layoutParams.width  = application.px2Px(binding.info.layoutParams.width)
         binding.info.layoutParams.height = application.px2Px(binding.info.layoutParams.height)
 
         val layoutParams = binding.info.layoutParams as ViewGroup.MarginLayoutParams
@@ -52,9 +52,9 @@ class InfoFragment : Fragment() {
         binding.desc.layoutParams = layoutParamsDesc
 
         binding.title.textSize = application.px2PxFont(binding.title.textSize)
-        binding.desc.textSize = application.px2PxFont(binding.desc.textSize)
+        binding.desc.textSize  = application.px2PxFont(binding.desc.textSize)
 
-        binding.container.layoutParams.width = application.shouldWidthPx()
+        binding.container.layoutParams.width  = application.shouldWidthPx()
         binding.container.layoutParams.height = application.shouldHeightPx()
 
         _binding!!.root.visibility = View.GONE
@@ -63,10 +63,9 @@ class InfoFragment : Fragment() {
         return binding.root
     }
 
+    /** 切换频道时调用，显示频道名+台标+节目，5s 后隐藏 */
     fun show(tvViewModel: TVViewModel) {
-        if (_binding == null) {
-            return
-        }
+        if (_binding == null) return
         binding.title.text = tvViewModel.getTV().title
 
         Glide.with(this)
@@ -75,15 +74,38 @@ class InfoFragment : Fragment() {
 
         Log.i(TAG, "${tvViewModel.getTV().title} ${tvViewModel.epg.value}")
         val epg = tvViewModel.epg.value?.filter { it.beginTime < Utils.getDateTimestamp() }
-        if (!epg.isNullOrEmpty()) {
-            binding.desc.text = epg.last().title
-        } else {
-            binding.desc.text = ""
-        }
+        binding.desc.text = if (!epg.isNullOrEmpty()) epg.last().title else ""
 
         handler.removeCallbacks(removeRunnable)
         view?.visibility = View.VISIBLE
         handler.postDelayed(removeRunnable, delay)
+    }
+
+    /**
+     * 切换源时调用，右上角显示"源 current/total"，3s 后消失。
+     * 整个 InfoFragment 的 root 也需要可见（show 可能已触发，也可能没触发）。
+     */
+    fun showSourceIndicator(current: Int, total: Int) {
+        if (_binding == null) return
+        if (total <= 1) return   // 只有一个源不显示
+
+        val indicator = binding.tvSourceIndicator
+        indicator.text = "源 $current/$total"
+        indicator.visibility = View.VISIBLE
+
+        // root 可见（如果频道信息卡片已隐藏，让 root 单独显示源指示器）
+        view?.visibility = View.VISIBLE
+
+        handler.removeCallbacks(hideSourceRunnable)
+        handler.postDelayed(hideSourceRunnable, sourceDelay)
+    }
+
+    private val hideSourceRunnable = Runnable {
+        _binding?.tvSourceIndicator?.visibility = View.GONE
+        // 如果频道信息卡片也已隐藏，一起隐藏 root
+        if (_binding?.info?.visibility == View.GONE) {
+            view?.visibility = View.GONE
+        }
     }
 
     override fun onResume() {
@@ -94,10 +116,15 @@ class InfoFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(removeRunnable)
+        handler.removeCallbacks(hideSourceRunnable)
     }
 
     private val removeRunnable = Runnable {
-        view?.visibility = View.GONE
+        _binding?.info?.visibility = View.GONE
+        // 如果源指示器也消失了，隐藏 root
+        if (_binding?.tvSourceIndicator?.visibility == View.GONE) {
+            view?.visibility = View.GONE
+        }
     }
 
     override fun onDestroyView() {

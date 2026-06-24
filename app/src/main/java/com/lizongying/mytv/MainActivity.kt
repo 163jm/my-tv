@@ -158,6 +158,10 @@ class MainActivity : FragmentActivity(), Request.RequestListener, OnSharedPrefer
         }
     }
 
+    fun showSourceIndicator(current: Int, total: Int) {
+        infoFragment.showSourceIndicator(current, total)
+    }
+
     fun showErrorFragment(msg: String) {
         errorFragment.show(msg)
         if (errorFragment.isVisible) {
@@ -583,7 +587,7 @@ class MainActivity : FragmentActivity(), Request.RequestListener, OnSharedPrefer
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 active()
                 if (mainFragment.isHidden && !settingFragment.isVisible) {
-                    switchMainFragment()
+                    mainFragment.switchSource(-1)
                     return true
                 }
             }
@@ -591,7 +595,7 @@ class MainActivity : FragmentActivity(), Request.RequestListener, OnSharedPrefer
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 active()
                 if (mainFragment.isHidden && !settingFragment.isVisible) {
-                    showSetting()
+                    mainFragment.switchSource(+1)
                     return true
                 }
             }

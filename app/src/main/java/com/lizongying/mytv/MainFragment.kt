@@ -192,17 +192,28 @@ class MainFragment : Fragment(), CardAdapter.ItemListener {
                 }
                 tvViewModel.change.observe(viewLifecycleOwner) { _ ->
                     if (tvViewModel.change.value != null) {
-                        // CUSTOM 类型直接播放，无需请求 token
                         if (tvViewModel.getTV().programType == ProgramType.CUSTOM) {
-                            val url = tvViewModel.getTV().videoUrl.firstOrNull() ?: return@observe
+                            val from = tvViewModel.change.value
+                            val url = tvViewModel.getVideoUrlCurrent().ifEmpty {
+                                tvViewModel.getTV().videoUrl.firstOrNull() ?: return@observe
+                            }
                             tvViewModel.addVideoUrl(url)
                             tvViewModel.allReady()
                             if (check(tvViewModel)) {
                                 (activity as? MainActivity)?.play(tvViewModel)
-                                (activity as? MainActivity)?.showInfoFragment(tvViewModel)
+                                // 换源时不重复显示频道信息卡片
+                                if (from != "source") {
+                                    (activity as? MainActivity)?.showInfoFragment(tvViewModel)
+                                }
                                 setPosition(tvViewModel.getRowPosition(), tvViewModel.getItemPosition())
                             }
                         }
+                    }
+                }
+                // 换源指示器
+                tvViewModel.sourceChanged.observe(viewLifecycleOwner) { pair ->
+                    if (pair != null && tvViewModel.getTV().id == itemPosition) {
+                        (activity as? MainActivity)?.showSourceIndicator(pair.first, pair.second)
                     }
                 }
             }
@@ -315,6 +326,13 @@ class MainFragment : Fragment(), CardAdapter.ItemListener {
             itemPosition = (itemPosition + 1) % tvListViewModel.size()
             tvListViewModel.setItemPosition(itemPosition)
             tvListViewModel.getTVViewModel(itemPosition)?.changed("next")
+        }
+    }
+
+    /** 全屏状态下左右键：切换当前频道的源 */
+    fun switchSource(delta: Int) {
+        view?.post {
+            tvListViewModel.getTVViewModel(itemPosition)?.switchSource(delta)
         }
     }
 

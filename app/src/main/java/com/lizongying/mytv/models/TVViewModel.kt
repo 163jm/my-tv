@@ -26,30 +26,47 @@ class TVViewModel(private var tv: TV) : ViewModel() {
     var needGetToken = false
 
     private val _errInfo = MutableLiveData<String>()
-    val errInfo: LiveData<String>
-        get() = _errInfo
+    val errInfo: LiveData<String> get() = _errInfo
 
     private var _epg = MutableLiveData<MutableList<EPG>>()
-    val epg: LiveData<MutableList<EPG>>
-        get() = _epg
+    val epg: LiveData<MutableList<EPG>> get() = _epg
 
     private val _videoUrl = MutableLiveData<List<String>>()
-    val videoUrl: LiveData<List<String>>
-        get() = _videoUrl
+    val videoUrl: LiveData<List<String>> get() = _videoUrl
 
     private val _videoIndex = MutableLiveData<Int>()
-    val videoIndex: LiveData<Int>
-        get() = _videoIndex
+    val videoIndex: LiveData<Int> get() = _videoIndex
 
     private val _change = MutableLiveData<String>()
-    val change: LiveData<String>
-        get() = _change
+    val change: LiveData<String> get() = _change
 
     private val _ready = MutableLiveData<Boolean>()
-    val ready: LiveData<Boolean>
-        get() = _ready
+    val ready: LiveData<Boolean> get() = _ready
+
+    // 源切换通知：发出后 InfoFragment 显示"源 x/n"并 3s 后消失
+    private val _sourceChanged = MutableLiveData<Pair<Int, Int>>()  // (当前1-based, 总数)
+    val sourceChanged: LiveData<Pair<Int, Int>> get() = _sourceChanged
 
     var seq = 0
+
+    /** 源的总数 */
+    val sourceCount: Int get() = tv.videoUrl.size
+
+    /** 当前源下标（0-based） */
+    val currentSourceIndex: Int get() = tv.sourceIndex
+
+    /**
+     * 切换源：delta = +1 下一个，-1 上一个，循环。
+     * 切换后触发播放并通知 InfoFragment 显示"源 x/n"。
+     */
+    fun switchSource(delta: Int) {
+        if (sourceCount <= 1) return
+        tv.sourceIndex = ((tv.sourceIndex + delta) % sourceCount + sourceCount) % sourceCount
+        _videoIndex.value = tv.sourceIndex
+        _videoUrl.value   = tv.videoUrl
+        _sourceChanged.value = Pair(tv.sourceIndex + 1, sourceCount)
+        changed("source")
+    }
 
     fun addVideoUrl(url: String) {
         if (_videoUrl.value?.isNotEmpty() == true) {
@@ -61,7 +78,7 @@ class TVViewModel(private var tv: TV) : ViewModel() {
         } else {
             tv.videoUrl += listOf(url)
         }
-        _videoUrl.value = tv.videoUrl
+        _videoUrl.value  = tv.videoUrl
         _videoIndex.value = tv.videoUrl.lastIndex
     }
 
@@ -78,32 +95,21 @@ class TVViewModel(private var tv: TV) : ViewModel() {
     }
 
     init {
-        _videoUrl.value = tv.videoUrl
-        _videoIndex.value = tv.videoUrl.lastIndex
+        _videoUrl.value  = tv.videoUrl
+        _videoIndex.value = tv.sourceIndex
     }
 
-    fun getRowPosition(): Int {
-        return rowPosition
-    }
+    fun getRowPosition(): Int = rowPosition
+    fun getItemPosition(): Int = itemPosition
+    fun setRowPosition(position: Int) { rowPosition = position }
+    fun setItemPosition(position: Int) { itemPosition = position }
+    fun setErrInfo(info: String) { _errInfo.value = info }
+    fun getTV(): TV = tv
 
-    fun getItemPosition(): Int {
-        return itemPosition
-    }
-
-    fun setRowPosition(position: Int) {
-        rowPosition = position
-    }
-
-    fun setItemPosition(position: Int) {
-        itemPosition = position
-    }
-
-    fun setErrInfo(info: String) {
-        _errInfo.value = info
-    }
-
-    fun getTV(): TV {
-        return tv
+    fun getVideoUrlCurrent(): String {
+        val urls = _videoUrl.value ?: return ""
+        val idx  = _videoIndex.value ?: 0
+        return urls.getOrElse(idx) { urls.firstOrNull() ?: "" }
     }
 
     fun addYJceEPG(p: MutableList<TVProgram>) {
@@ -118,18 +124,11 @@ class TVViewModel(private var tv: TV) : ViewModel() {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss")
         dateFormat.timeZone = TimeZone.getTimeZone("UTC")
         val date = dateFormat.parse(s.substring(0, 19))
-        if (date != null) {
-            return (date.time / 1000).toInt()
-        }
-        return 0
+        return if (date != null) (date.time / 1000).toInt() else 0
     }
 
     fun addFEPG(p: List<FEPG>) {
         _epg.value = p.map { EPG(it.title, formatFTime(it.event_time)) }.toMutableList()
-    }
-
-    fun getVideoUrlCurrent(): String {
-        return _videoUrl.value!![_videoIndex.value!!]
     }
 
     companion object {

@@ -3,24 +3,14 @@ package com.lizongying.mytv.models
 import android.content.Context
 import com.lizongying.mytv.speedtest.M3uParser
 
-/**
- * 频道列表。
- * 原来的杨视频硬编码频道已移除，改为从本地 iptv_sources.m3u8 加载。
- * 调用 load(context) 后 list 才有数据。
- */
 object TVList {
 
-    /** group名 → TV列表，保持插入顺序（对应 m3u8 里 group-title 的顺序） */
+    /** group名 → TV列表，保持插入顺序 */
     var list: Map<String, List<TV>> = emptyMap()
         private set
 
-    /**
-     * 从本地缓存 m3u8 加载频道列表。
-     * 在 MainFragment.onActivityCreated 之前调用。
-     * @return 加载到的频道总数
-     */
     fun load(context: Context): Int {
-        val parsed = M3uParser.readLocal(context)   // Map<group, List<ParsedChannel>>
+        val parsed = M3uParser.readLocal(context)
         if (parsed.isEmpty()) {
             list = emptyMap()
             return 0
@@ -30,15 +20,22 @@ object TVList {
         var globalId = 0
 
         parsed.forEach { (group, channels) ->
-            val tvs = channels.mapIndexed { _, ch ->
+            // 同名频道合并：name → List<url>（保持速度排序，已在 M3uParser.buildAndWrite 完成）
+            val byName = linkedMapOf<String, MutableList<String>>()
+            for (ch in channels) {
+                byName.getOrPut(ch.name) { mutableListOf() }.add(ch.url)
+            }
+
+            val tvs = byName.map { (name, urls) ->
+                val first = channels.first { it.name == name }
                 TV(
                     id          = globalId++,
-                    title       = ch.name,
-                    alias       = ch.name,
-                    videoUrl    = listOf(ch.url),  // 直接可播放，不需要动态 token
+                    title       = name,
+                    alias       = name,
+                    videoUrl    = urls,          // 多个源
                     channel     = group,
-                    logo        = ch.logo,
-                    pid         = "",              // 无杨视频 pid
+                    logo        = first.logo,
+                    pid         = "",
                     sid         = "",
                     programType = ProgramType.CUSTOM,
                     needToken   = false,
