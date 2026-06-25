@@ -15,6 +15,10 @@ chrono       = { version = "0.4",  features = ["clock"] }
 anyhow       = "1"
 futures-util = "0.3"
 
+# android feature 为空占位，仅供 CI/Makefile 传 --features android 时不报错
+[features]
+android = []
+
 [profile.release]
 strip         = "symbols"
 debug         = false
