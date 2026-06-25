@@ -22,7 +22,7 @@ pub fn is_running() -> bool {
     IS_RUNNING.load(Ordering::Relaxed)
 }
 
-/// 主调度任务
+/// 主调度任务（server 模式）
 #[cfg(not(feature = "android"))]
 pub async fn run_task(
     state: std::sync::Arc<AppState>,
@@ -44,11 +44,9 @@ pub async fn run_task(
     let mut all_entries: Vec<Entry> = vec![];
     let mut source_idx = 0usize;
 
-    // ── Step 1: 下载订阅文件 ──────────────────────────────────────
     println!("[task] downloading subscribe files...");
     let sub_cache = download_subscribes(&urls).await;
 
-    // ── Step 2 & 3: 获取 + 测速 API 主机 ─────────────────────────
     let api_items = fetch_api_data().await;
     if !api_items.is_empty() {
         println!("[task] speed-testing {} API hosts...", api_items.len());
@@ -78,7 +76,6 @@ pub async fn run_task(
         }
     }
 
-    // ── Step 4: 测速订阅源 ────────────────────────────────────────
     for (raw_url, cache_path) in &sub_cache {
         let channels = parse_subscribe_file(cache_path);
         if channels.is_empty() {
@@ -119,7 +116,6 @@ pub async fn run_task(
         return;
     }
 
-    // ── Step 5: 构建并写入输出 ────────────────────────────────────
     let update_time = chrono::Local::now();
     let (m3u8, txt) = build_and_write(all_entries, update_time);
 
@@ -172,7 +168,6 @@ fn select_top_sources(mut results: Vec<SourceResult>, top_n: usize) -> Vec<Sourc
     let mut selected_hosts = std::collections::HashSet::new();
     let mut final_results: Vec<SourceResult> = vec![];
 
-    // 每种类型至少保留一个
     for mt in &["txiptv", "hsmdtv", "zhgxtv", "jsmpeg"] {
         if let Some(r) = results
             .iter()
@@ -182,7 +177,6 @@ fn select_top_sources(mut results: Vec<SourceResult>, top_n: usize) -> Vec<Sourc
             final_results.push(r.clone());
         }
     }
-    // 填充至 top_n
     for r in &results {
         if final_results.len() >= top_n {
             break;
@@ -268,13 +262,14 @@ fn process_hsmdtv_channels(
 
 // ── Android CLI 专用入口 ──────────────────────────────────────────
 
-/// Android 模式：测速完成后把所有频道以 JSON 形式返回
-/// 结构：[{"name":"CCTV1","url":"http://...","speed":3.2,"group":"央视频道"}, ...]
+/// Android 模式：测速 → 整理去重排序 → 直接写 m3u8 文件到 output 路径。
+/// 返回写入的频道数量（去重后的频道名数）；0 表示无可用频道。
 pub async fn run_task_android(
     workers: usize,
     top_n: usize,
     urls: Vec<String>,
-) -> Vec<serde_json::Value> {
+    output_path: &std::path::Path,
+) -> usize {
     let start = std::time::Instant::now();
     eprintln!("[android] ── speedtest start ──");
 
@@ -282,7 +277,7 @@ pub async fn run_task_android(
     let mut all_entries: Vec<Entry> = vec![];
     let mut source_idx = 0usize;
 
-    // Step 1 & Step 2 并行：同时下载订阅文件 + 获取 API 网关列表
+    // Step 1 & 2 并行：下载订阅文件 + 获取 API 网关列表
     eprintln!("[android] fetching api list & subscribe files in parallel...");
     let sub_urls = urls.clone();
     let (api_items, sub_cache) = tokio::join!(
@@ -318,7 +313,11 @@ pub async fn run_task_android(
             eprintln!("[android] no channels from {}", raw_url);
             continue;
         }
-        eprintln!("[android] {} channels from {} — testing hosts...", channels.len(), raw_url);
+        eprintln!(
+            "[android] {} channels from {} — testing hosts...",
+            channels.len(),
+            raw_url
+        );
         let host_speeds = crate::speedtest::test_subscribe_hosts(&channels, workers).await;
 
         let mut added = 0usize;
@@ -342,33 +341,58 @@ pub async fn run_task_android(
             });
             added += 1;
         }
-        eprintln!("[android] kept {} / {} channels", added, channels.len());
+        eprintln!(
+            "[android] kept {} / {} channels",
+            added,
+            channels.len()
+        );
         source_idx += 1;
     }
 
     eprintln!(
-        "[android] done — {} entries in {}s",
+        "[android] collected {} raw entries in {}s, building m3u8...",
         all_entries.len(),
         start.elapsed().as_secs()
     );
 
-    // 转换为 JSON 数组，每条包含 name / url / speed / group
-    all_entries
-        .iter()
-        .map(|e| {
-            let group = if e.name.to_uppercase().contains("CCTV") {
-                "央视频道"
-            } else if e.name.contains("卫视") {
-                "卫视频道"
-            } else {
-                "其他频道"
-            };
-            serde_json::json!({
-                "name":  e.name,
-                "url":   e.url,
-                "speed": (e.speed * 100.0).round() / 100.0,
-                "group": group,
-            })
-        })
-        .collect()
+    if all_entries.is_empty() {
+        eprintln!("[android] no entries, abort");
+        return 0;
+    }
+
+    // Step 5: 整理 → 去重 → 排序 → 写 m3u8（复用 build_and_write，
+    //         同时把结果写到 Kotlin 指定的 output 路径）
+    let update_time = chrono::Local::now();
+    let (m3u8, _txt) = build_and_write(all_entries, update_time);
+
+    // build_and_write 已写到 data_dir/iptv_sources.m3u8；
+    // 再额外写一份到 Kotlin 传入的 output 路径（通常是 filesDir）
+    if let Err(e) = std::fs::write(output_path, &m3u8) {
+        eprintln!("[android] failed to write output: {}", e);
+        return 0;
+    }
+
+    // 统计去重后频道名数量
+    let channel_count = {
+        let mut names = std::collections::HashSet::new();
+        for line in m3u8.lines() {
+            if let Some(rest) = line.strip_prefix("#EXTINF") {
+                if let Some(idx) = rest.rfind(',') {
+                    let name = rest[idx + 1..].trim().to_string();
+                    if !name.is_empty() {
+                        names.insert(name);
+                    }
+                }
+            }
+        }
+        names.len()
+    };
+
+    eprintln!(
+        "[android] done — {} channels written to {} ({}s total)",
+        channel_count,
+        output_path.display(),
+        start.elapsed().as_secs()
+    );
+    channel_count
 }

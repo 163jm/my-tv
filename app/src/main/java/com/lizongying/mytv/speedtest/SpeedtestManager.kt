@@ -14,18 +14,23 @@ object SpeedtestManager {
     fun isRunning() = isRunning.get()
 
     interface ProgressListener {
-        fun onProgress(completed: Int, total: Int, valid: Int, phase: String)
-        fun onFinished(channelCount: Int)
+        fun onProgress(phase: String)
+        fun onFinished()
         fun onError(message: String)
     }
 
+    /**
+     * 启动 Rust 测速二进制，等待其输出 m3u8 文件。
+     * 成功后 m3u8 文件已在 filesDir/iptv_sources.m3u8，可直接播放。
+     * 返回 true 表示成功，false 表示失败或重复启动。
+     */
     suspend fun runSpeedtest(
         context: Context,
         listener: ProgressListener? = null,
-    ): Int = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         if (!isRunning.compareAndSet(false, true)) {
             Log.w(TAG, "already running")
-            return@withContext -1
+            return@withContext false
         }
         try {
             doRun(context, listener)
@@ -34,35 +39,27 @@ object SpeedtestManager {
         }
     }
 
-    private fun doRun(context: Context, listener: ProgressListener?): Int {
-        listener?.onProgress(0, 0, 0, "正在启动测速引擎…")
+    private fun doRun(context: Context, listener: ProgressListener?): Boolean {
+        listener?.onProgress("正在启动测速引擎…")
 
-        val entries = try {
+        try {
             NativeSpeedtestRunner.run(
                 context     = context,
                 workers     = 60,
                 top         = 10,
                 logCallback = { line ->
-                    val phase = line.removePrefix("[android] ").trim()
-                    listener?.onProgress(0, 0, 0, phase)
-                }
+                    val phase = line.removePrefix("[android]").trim()
+                    if (phase.isNotEmpty()) listener?.onProgress(phase)
+                },
             )
         } catch (e: Exception) {
             Log.e(TAG, "speedtest failed: ${e.message}")
             listener?.onError("测速失败：${e.message}")
-            return 0
+            return false
         }
 
-        if (entries.isEmpty()) {
-            Log.w(TAG, "no entries found")
-            listener?.onError("未找到可用频道")
-            return 0
-        }
-
-        M3uParser.buildAndWrite(context, entries)
-        val count = entries.map { it.name }.toSet().size
-        Log.i(TAG, "done, $count channels")
-        listener?.onFinished(count)
-        return count
+        Log.i(TAG, "speedtest done, m3u8 ready")
+        listener?.onFinished()
+        return true
     }
 }

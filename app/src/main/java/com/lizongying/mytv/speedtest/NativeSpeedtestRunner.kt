@@ -2,14 +2,13 @@ package com.lizongying.mytv.speedtest
 
 import android.content.Context
 import android.util.Log
-import org.json.JSONArray
 import java.io.File
 
 /**
  * 调用打包进 APK 的 Rust 测速二进制。
  *
- * jniLibs 中只有当前 APK 对应架构的 libiptv_speedtest.so，
- * 安装后系统解压到 nativeLibraryDir，固定文件名无需架构判断。
+ * Rust 端完成全部测速、整理、去重、排序工作，直接输出 m3u8 文件。
+ * Kotlin 侧只负责启动进程、转发进度日志、等待结束。
  */
 object NativeSpeedtestRunner {
 
@@ -19,7 +18,7 @@ object NativeSpeedtestRunner {
 
     /**
      * 将 so 从 nativeLibraryDir 复制到 filesDir 并赋予执行权限。
-     * 已存在且大小相同时跳过（应对 APK 升级场景用大小判断）。
+     * 已存在且大小相同时跳过。
      * @return 可执行文件绝对路径
      */
     fun prepare(context: Context): String {
@@ -43,13 +42,14 @@ object NativeSpeedtestRunner {
     }
 
     /**
-     * 运行 Rust 二进制，输出 JSON 到临时文件，解析后返回频道列表。
+     * 运行 Rust 二进制，等待其直接写出 m3u8 文件。
      *
      * @param context      Context
      * @param workers      并发数
      * @param top          每类型保留前 N 源
      * @param extraUrls    额外订阅 URL
      * @param logCallback  实时 stderr 日志回调（IO 线程）
+     * @return 输出的 m3u8 File（可直接作为播放列表使用）
      */
     fun run(
         context: Context,
@@ -57,10 +57,9 @@ object NativeSpeedtestRunner {
         top: Int = 10,
         extraUrls: List<String> = emptyList(),
         logCallback: ((String) -> Unit)? = null,
-    ): List<IptvEntry> {
-        val binPath = prepare(context)
-        val outputFile = File(context.cacheDir, "iptv_speedtest_result.json")
-        outputFile.delete()
+    ): File {
+        val binPath    = prepare(context)
+        val outputFile = File(context.filesDir, M3uParser.OUTPUT_FILENAME)
 
         val cmd = mutableListOf(
             binPath,
@@ -91,14 +90,12 @@ object NativeSpeedtestRunner {
         stderrThread.isDaemon = true
         stderrThread.start()
 
-        // 持续 drain stdout，防止 Rust 进程的 print!/println! 写满管道缓冲区
-        // （~64 KB）后在 write() 处永久阻塞，导致测速卡死、流量归零。
-        // Rust 侧进度条已改用 eprint!，此处仅做兜底。
+        // drain stdout 防止管道缓冲区满导致 Rust 进程阻塞
         val stdoutThread = Thread {
             try {
                 val buf = ByteArray(8192)
                 val ins = process.inputStream
-                while (ins.read(buf) != -1) { /* drain，防止管道缓冲区阻塞 */ }
+                while (ins.read(buf) != -1) { /* drain */ }
             } catch (_: Exception) {}
         }
         stdoutThread.isDaemon = true
@@ -111,29 +108,10 @@ object NativeSpeedtestRunner {
         check(exitCode == 0) { "binary exited with code $exitCode" }
 
         check(outputFile.exists() && outputFile.length() > 0) {
-            "output file empty or missing: ${outputFile.absolutePath}"
+            "m3u8 output empty or missing: ${outputFile.absolutePath}"
         }
 
-        val arr = JSONArray(outputFile.readText())
-        val entries = mutableListOf<IptvEntry>()
-        for (i in 0 until arr.length()) {
-            val obj   = arr.getJSONObject(i)
-            val name  = obj.optString("name")
-            val url   = obj.optString("url")
-            val speed = obj.optDouble("speed", -1.0)
-            val group = obj.optString("group", ChannelHelper.baseGroup(name))
-            if (name.isNotEmpty() && url.isNotEmpty() && speed > 0) {
-                entries += IptvEntry(
-                    name        = name,
-                    url         = url,
-                    group       = group,
-                    logo        = ChannelHelper.buildLogoUrl(name),
-                    speed       = speed,
-                    sourceIndex = 0,
-                )
-            }
-        }
-        Log.i(TAG, "parsed ${entries.size} entries")
-        return entries
+        Log.i(TAG, "m3u8 ready: ${outputFile.absolutePath} (${outputFile.length()} bytes)")
+        return outputFile
     }
 }

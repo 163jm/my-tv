@@ -6,7 +6,6 @@ mod subscribe;
 mod task;
 mod types;
 
-// server 模块仅在非 android feature 下编译
 #[cfg(not(feature = "android"))]
 mod server;
 
@@ -46,15 +45,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// 启动 HTTP 服务器模式（原有功能）
+    /// 启动 HTTP 服务器模式
     #[cfg(not(feature = "android"))]
     Serve(ServeArgs),
 
-    /// Android CLI 模式：测速后输出 JSON 到 stdout
+    /// Android 模式：测速后直接输出 m3u8 文件
     Android(AndroidArgs),
 }
 
-// ── Server 模式参数（保持原有完整功能）───────────────────────────
+// ── Server 模式参数 ───────────────────────────────────────────────
 
 #[cfg(not(feature = "android"))]
 #[derive(clap::Args, Debug)]
@@ -94,9 +93,9 @@ struct AndroidArgs {
     #[arg(long = "url")]
     urls: Vec<String>,
 
-    /// 结果写入文件路径（不指定则输出到 stdout）
+    /// m3u8 结果写入路径（必填）
     #[arg(long)]
-    output: Option<PathBuf>,
+    output: PathBuf,
 }
 
 // ── 程序入口 ──────────────────────────────────────────────────────
@@ -115,48 +114,39 @@ async fn main() {
 // ── Android CLI 模式 ──────────────────────────────────────────────
 
 async fn run_android(args: AndroidArgs) {
-    // 优先用 --output 文件的父目录作为数据目录。
-    // 这样在 Android 沙箱里始终落在 app 有写权限的 cacheDir，
-    // 而不是无权限的 /data/local/tmp（temp_dir() 在 Android 上的返回值）。
-    let data_dir = if let Some(out) = &args.output {
-        out.parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(std::env::temp_dir)
-    } else {
-        std::env::temp_dir()
-    };
+    // 用 --output 的父目录作为数据目录（沙箱权限安全）
+    let data_dir = args
+        .output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+
     std::fs::create_dir_all(&data_dir).ok();
     init_data_dir(Some(&data_dir));
 
-    // 组合订阅 URL：用户传入的 + 默认内置
+    // 组合订阅 URL：用户传入 + 默认内置
     let mut urls = args.urls.clone();
     urls.push(DEFAULT_SUB_URL.to_string());
 
     eprintln!(
-        "[android] workers={} top={} urls={}",
+        "[android] workers={} top={} urls={} output={}",
         args.workers,
         args.top,
-        urls.len()
+        urls.len(),
+        args.output.display()
     );
 
-    // 复用原有 task 逻辑，但结果通过 JSON 返回
-    let result = task::run_task_android(args.workers, args.top, urls).await;
+    let count = task::run_task_android(args.workers, args.top, urls, &args.output).await;
 
-    let json = serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string());
-
-    match args.output {
-        Some(path) => {
-            std::fs::write(&path, &json).expect("failed to write output file");
-            eprintln!("[android] result written to {}", path.display());
-        }
-        None => {
-            println!("{}", json);
-        }
+    if count == 0 {
+        eprintln!("[android] no channels found, exiting with error");
+        std::process::exit(1);
     }
+    eprintln!("[android] finished, {} channels", count);
 }
 
-// ── Server 模式（原有逻辑，完整保留）────────────────────────────
+// ── Server 模式（完整保留）───────────────────────────────────────
 
 #[cfg(not(feature = "android"))]
 async fn run_server(args: ServeArgs) {
