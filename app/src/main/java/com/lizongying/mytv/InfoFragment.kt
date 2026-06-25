@@ -85,12 +85,22 @@ class InfoFragment : Fragment() {
      * 切换源时调用，右上角显示"源 current/total"，3s 后消失。
      * 整个 InfoFragment 的 root 也需要可见（show 可能已触发，也可能没触发）。
      */
+    /**
+     * 切换源时调用，右上角显示源信息，3s 后消失。
+     *   current >  0 → 正常切换，显示"源 current/total"
+     *   current == 0 → 已是第一个源，显示"已是第一个源!"
+     *   current == -1→ 已是最后一个源，显示"已是最后一个源!"
+     */
     fun showSourceIndicator(current: Int, total: Int) {
         if (_binding == null) return
         if (total <= 1) return   // 只有一个源不显示
 
         val indicator = binding.tvSourceIndicator
-        indicator.text = "源 $current/$total"
+        indicator.text = when (current) {
+            0    -> "已是第一个源!"
+            -1   -> "已是最后一个源!"
+            else -> "源 $current/$total"
+        }
         indicator.visibility = View.VISIBLE
 
         // root 可见（如果频道信息卡片已隐藏，让 root 单独显示源指示器）
