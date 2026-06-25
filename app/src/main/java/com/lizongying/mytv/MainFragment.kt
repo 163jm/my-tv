@@ -194,10 +194,13 @@ class MainFragment : Fragment(), CardAdapter.ItemListener {
                     if (tvViewModel.change.value != null) {
                         if (tvViewModel.getTV().programType == ProgramType.CUSTOM) {
                             val from = tvViewModel.change.value
-                            val url = tvViewModel.getVideoUrlCurrent().ifEmpty {
-                                tvViewModel.getTV().videoUrl.firstOrNull() ?: return@observe
+                            // 换源时直接播放已有 URL，不再 addVideoUrl（否则每次换源都会新增一条，导致总数不断增加）
+                            if (from != "source") {
+                                val url = tvViewModel.getVideoUrlCurrent().ifEmpty {
+                                    tvViewModel.getTV().videoUrl.firstOrNull() ?: return@observe
+                                }
+                                tvViewModel.addVideoUrl(url)
                             }
-                            tvViewModel.addVideoUrl(url)
                             tvViewModel.allReady()
                             if (check(tvViewModel)) {
                                 (activity as? MainActivity)?.play(tvViewModel)
