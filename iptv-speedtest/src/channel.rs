@@ -64,6 +64,10 @@ static RE_CCTV_NUM: Lazy<Regex> = Lazy::new(|| Regex::new(r"CCTV(\d+)台").unwra
 
 pub fn clean_channel_name(name: &str) -> String {
     let mut s = name.to_string();
+
+    // ── 别名映射：在所有清洗之前先替换原始名（保留卫视后缀供后续正则提取）─
+    s = normalize_alias(&s);
+
     s = s.replace("cctv", "CCTV");
     s = s.replace("中央", "CCTV");
     s = s.replace("央视", "CCTV");
@@ -100,19 +104,21 @@ pub fn clean_channel_name(name: &str) -> String {
         return s.replace("CCTV", "").replace("cctv", "");
     }
 
-    // ── 名称别名映射（放在最后，所有清洗完成后统一替换）─────────────
-    s = normalize_alias(&s);
-
     s
 }
 
 /// 将已知的别名/错误叫法统一为标准频道名。
-/// 同名合并逻辑会把这些源归到同一个频道下。
+/// 在清洗流程开始前调用，覆盖原始输入名称。
 fn normalize_alias(name: &str) -> String {
     match name {
+        // 卫视别名（原始输入形式）
         "上海卫视"   => "东方卫视".to_string(),
         "内蒙卫视"   => "内蒙古卫视".to_string(),
         "福建卫视"   => "东南卫视".to_string(),
+        // 去掉"卫视"后缀的简称形式（以防其他渠道只写简称）
+        "上海"       => "东方卫视".to_string(),
+        "内蒙"       => "内蒙古卫视".to_string(),
+        "福建"       => "东南卫视".to_string(),
         _            => name.to_string(),
     }
 }
